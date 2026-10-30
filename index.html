@@ -66,15 +66,8 @@
   #signup { flex-wrap: wrap; }
   #signup .pitch { flex: 1 1 240px; font-size: 14px; line-height: 1.35; }
   #signup .pitch b { display: block; font-size: 15px; }
-  #signup form { display: flex; gap: 8px; flex: 1 1 280px; }
-  #signup input { flex: 1; min-width: 0; font: inherit; font-size: 15px; color: var(--ink);
-    background: rgba(255,255,255,0.06); border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; }
-  #signup input:focus { outline: none; border-color: var(--accent); }
   #signup .go { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 700; }
   #signup .x { border: none; color: var(--ink-dim); padding: 4px 6px; margin-left: auto; }
-  #signup.done form { display: none; }
-  #thanks { display: none; font-size: 14px; color: var(--accent); }
-  #signup.done #thanks { display: block; }
 
   /* legend */
   #legend { position: absolute; right: 16px; top: max(16px, env(safe-area-inset-top));
@@ -105,6 +98,11 @@
     .city .lbl { font-size: 12px; }
   }
   body.embed #signup { display: none; }
+  #modal { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center;
+    background: rgba(0,0,0,0.6); padding: 16px; }
+  #modal .card { position: relative; width: min(480px, 100%); background: #111; border-radius: 14px; overflow: hidden; }
+  #modal iframe { display: block; width: 100%; height: 320px; border: 0; background: #111; }
+  #modal .x { position: absolute; top: 6px; right: 8px; color: #999; border: none; font-size: 16px; z-index: 1; }
 </style>
 </head>
 <body>
@@ -129,27 +127,39 @@
     <div class="speeds" id="speeds"></div>
   </div>
   <div class="bar" id="signup">
-    <div class="pitch"><b>More cities are coming.</b>Get the next map and the code behind it from The New Science of Maps.</div>
-    <form id="form">
-      <input type="email" name="email" required placeholder="your@email.com" autocomplete="email" aria-label="Email">
-      <button class="go" type="submit">Notify me</button>
-    </form>
-    <div id="thanks">Thanks! You're on the list.</div>
+    <div class="pitch"><b>More cities are coming.</b>Get each new map, and the Python behind it, in my free newsletter.</div>
+    <button class="go" id="sub">Subscribe free</button>
     <button class="x" id="close" aria-label="Hide">✕</button>
   </div>
 </div>
 
 <div id="loading" class="hidden">Loading the timetable…</div>
 
+<div id="modal" class="hidden" role="dialog" aria-label="Subscribe">
+  <div class="card">
+    <button class="x" id="mclose" aria-label="Close">✕</button>
+    <iframe id="subframe" title="Subscribe to Milan Janosov's newsletter" frameborder="0" scrolling="no"></iframe>
+  </div>
+</div>
+
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 // ------------------------------------------------------------------ config
-// Where sign-ups go. FORM_ENDPOINT empty => the button opens NSOM instead
-// (no address is collected silently anywhere). When the page is embedded in
-// the NSOM Squarespace page, add ?embed=1 and the native newsletter block
-// below the iframe does the capture.
-const FORM_ENDPOINT = "";
-const NSOM_URL = "https://www.thenewscienceofmaps.com/";
+// Sign-ups go to the Substack list via Substack's embed form. When the page
+// is embedded elsewhere with its own signup, ?embed=1 hides this bar.
+const SUBSTACK_EMBED = "https://milanjanosov.substack.com/embed";
+// Visitor counts: GoatCounter (free, no cookies, so no consent banner).
+// Empty => nothing is loaded or sent.
+const GOATCOUNTER = "";
+function track(name) {
+  if (window.goatcounter && goatcounter.count) goatcounter.count({ path: name, title: name, event: true });
+}
+if (GOATCOUNTER) {
+  const g = document.createElement("script");
+  g.async = true; g.src = "https://gc.zgo.at/count.js";
+  g.dataset.goatcounter = `https://${GOATCOUNTER}.goatcounter.com/count`;
+  document.head.appendChild(g);
+}
 const Q = new URLSearchParams(location.search);
 if (Q.get("embed")) document.body.classList.add("embed");
 
@@ -398,20 +408,17 @@ function initControls() {
   addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "INPUT" && D) { e.preventDefault(); setPlaying(!playing); } });
   $("back").onclick = closeCity;
 
-  // signup
-  const sb = $("signup");
+  // signup: Substack's own embed form, so addresses go straight onto the
+  // newsletter list and Substack sends the confirmation. Loaded on first open only.
+  const sb = $("signup"), modal = $("modal");
   $("close").onclick = () => sb.style.display = "none";
-  $("form").addEventListener("submit", async ev => {
-    ev.preventDefault();
-    const email = ev.target.email.value.trim();
-    if (!FORM_ENDPOINT) { window.open(NSOM_URL, "_blank", "noopener"); return; }
-    try {
-      const r = await fetch(FORM_ENDPOINT, { method: "POST", headers: { "Accept": "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ email, source: `transit-pulse-${cityKey || "landing"}` }) });
-      if (!r.ok) throw new Error(r.status);
-      sb.classList.add("done");
-    } catch (e) { window.open(NSOM_URL, "_blank", "noopener"); }
-  });
+  $("sub").onclick = () => {
+    if (!$("subframe").src) $("subframe").src = SUBSTACK_EMBED;
+    modal.classList.remove("hidden");
+    track("subscribe-open");
+  };
+  $("mclose").onclick = () => modal.classList.add("hidden");
+  modal.addEventListener("click", e => { if (e.target === modal) modal.classList.add("hidden"); });
 }
 
 // ------------------------------------------------------------------ search
@@ -470,6 +477,7 @@ async function openCity(key) {
   for (const id of ["clock", "back", "legend", "player"]) $(id).classList.remove("hidden");
   $("loading").classList.add("hidden");
   setUrl(key);
+  track(`city-${key}`);
 }
 
 function closeCity() {
