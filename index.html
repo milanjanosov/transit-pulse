@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Transit Pulse — Budapest</title>
-<meta name="description" content="Every scheduled bus, tram, metro and train in Budapest, moving through a whole day. Scrub the clock and watch the city breathe.">
+<title>Transit Pulse</title>
+<meta name="description" content="Every scheduled bus, tram, metro and train, moving through a whole day. Pick a city, scrub the clock and watch it breathe.">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
@@ -33,6 +33,19 @@
   #clock { margin-top: 10px; font-size: clamp(30px, 4vw, 44px); font-weight: 500;
     font-variant-numeric: tabular-nums; }
   #count { font-size: 14px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+  #back { pointer-events: auto; margin-top: 12px; font-size: 13px; }
+  #search { position: relative; pointer-events: auto; margin-top: 12px; width: min(280px, 100%); text-shadow: none; }
+  #q { width: 100%; font: inherit; font-size: 15px; color: var(--ink); background: var(--panel);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
+  #q:focus { outline: none; border-color: var(--accent); }
+  #hits { position: absolute; left: 0; right: 0; top: calc(100% + 4px); background: #151515;
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden; z-index: 4; max-height: 50vh; overflow-y: auto; }
+  #hits div { padding: 8px 12px; font-size: 14px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px; }
+  #hits div span { color: var(--ink-dim); font-size: 12px; }
+  #hits div:hover, #hits div.sel { background: rgba(255,255,255,0.08); }
+  body.far .city .lbl { display: none; }
+  body.far .city:hover .lbl { display: inline; }
 
   /* controls */
   #ctl { position: absolute; left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom));
@@ -68,16 +81,28 @@
     background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
     font-size: 13px; line-height: 1.7; }
   #legend .row { display: flex; align-items: center; gap: 8px; }
+  #legend .dots { display: flex; gap: 3px; }
   #legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block;
     box-shadow: 0 0 6px currentColor; }
   #legend .title { color: var(--ink-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
-  #loading { position: absolute; inset: 0; display: grid; place-items: center; font-size: 15px;
-    color: var(--ink-dim); background: var(--bg); z-index: 5; }
 
+  /* city markers on the landing map */
+  .city { display: flex; align-items: center; gap: 7px; cursor: pointer; transform: translateX(7px); }
+  .city .pin { width: 12px; height: 12px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 4px rgba(255, 216, 0, 0.18), 0 0 16px rgba(255, 216, 0, 0.7); flex: none; }
+  .city .lbl { font-size: 13px; font-weight: 500; color: var(--ink); white-space: nowrap;
+    text-shadow: 0 1px 6px #000, 0 0 2px #000; }
+  .city:hover .pin { background: #fff; }
+  .city:hover .lbl { color: #fff; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; font-size: 15px;
+    color: var(--ink-dim); background: rgba(13,13,13,0.6); z-index: 5; pointer-events: none; }
+
+  .hidden { display: none !important; }
   @media (max-width: 640px) {
     #legend { top: auto; bottom: 168px; font-size: 12px; padding: 8px 10px; }
     .speeds button { padding: 5px 6px; }
     #signup .pitch { font-size: 13px; }
+    .city .lbl { font-size: 12px; }
   }
   body.embed #signup { display: none; }
 </style>
@@ -87,16 +112,18 @@
 <canvas id="fx"></canvas>
 
 <div id="head">
-  <h1 id="city">Budapest</h1>
-  <div class="sub" id="subtitle">Every scheduled vehicle · one weekday</div>
-  <div id="clock">08:00</div>
+  <h1 id="city">Transit Pulse</h1>
+  <div class="sub" id="subtitle">Every scheduled vehicle, through a whole day. Pick a city on the map.</div>
+  <div id="clock" class="hidden">08:00</div>
   <div id="count"></div>
+  <div id="search"><input id="q" type="search" placeholder="Search a city…" autocomplete="off" aria-label="Search a city"><div id="hits" class="hidden"></div></div>
+  <button id="back" class="hidden">← All cities</button>
 </div>
 
-<div id="legend"></div>
+<div id="legend" class="hidden"></div>
 
 <div id="ctl">
-  <div class="bar">
+  <div class="bar hidden" id="player">
     <button id="play" aria-label="Play or pause">❚❚</button>
     <input id="slider" type="range" min="0" max="1" step="1" aria-label="Time of day">
     <div class="speeds" id="speeds"></div>
@@ -112,7 +139,7 @@
   </div>
 </div>
 
-<div id="loading">Loading the timetable…</div>
+<div id="loading" class="hidden">Loading the timetable…</div>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
@@ -123,17 +150,23 @@
 // below the iframe does the capture.
 const FORM_ENDPOINT = "";
 const NSOM_URL = "https://www.thenewscienceofmaps.com/";
-const CITY = new URLSearchParams(location.search).get("city") || "budapest";
-if (new URLSearchParams(location.search).get("embed")) document.body.classList.add("embed");
+const Q = new URLSearchParams(location.search);
+if (Q.get("embed")) document.body.classList.add("embed");
 
 const ESRI = l => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_${l}/MapServer/tile/{z}/{y}/{x}`;
 const SPEEDS = [[60, "½×"], [120, "1×"], [300, "2.5×"], [900, "7.5×"]];   // timetable seconds per real second; 1× = the reel's pace
+const WORLD = { center: [10, 38], zoom: innerWidth < 640 ? 0.6 : 1.6 };
 const R = 6378137, TAU = 2 * Math.PI;
+const $ = id => document.getElementById(id);
 
 // ------------------------------------------------------------------ data
-let D, shapes = [], pats = [], profs = [], trips, tripEnd, maxDur = 0;
+// One city at a time. Shapes are delta-encoded integer metres in Web
+// Mercator; a trip is (start second, pattern, profile, route name).
+let D = null, shapes, pats, profs, trips, tripEnd, tripStarts, maxDur, cityKey = null, loadSeq = 0;
+const cache = {};
 
 function decode(d) {
+  shapes = []; maxDur = 0;
   const [ox, oy] = d.origin;
   for (const flat of d.shapes) {
     const n = flat.length / 2, x = new Float64Array(n), y = new Float64Array(n), cum = new Float64Array(n);
@@ -148,12 +181,13 @@ function decode(d) {
   // by well under a metre per vertex - invisible at map scale
   pats = d.patterns.map(([s, c, e, ds]) => ({ s, c, e, ds: Int32Array.from(ds) }));
   profs = d.profiles.map(p => Int32Array.from(p));
-  const t = d.trips, n = t.length / 4;
-  trips = new Int32Array(t);
-  tripEnd = new Int32Array(n);
+  trips = new Int32Array(d.trips);
+  const n = trips.length / 4;
+  tripEnd = new Int32Array(n); tripStarts = new Int32Array(n);
   for (let i = 0; i < n; i++) {
-    const p = profs[t[4 * i + 2]];
-    tripEnd[i] = t[4 * i] + p[p.length - 1];
+    const p = profs[trips[4 * i + 2]];
+    tripStarts[i] = trips[4 * i];
+    tripEnd[i] = trips[4 * i] + p[p.length - 1];
     maxDur = Math.max(maxDur, p[p.length - 1]);
   }
 }
@@ -192,42 +226,55 @@ const map = new maplibregl.Map({
     version: 8,
     sources: {
       base: { type: "raster", tiles: [ESRI("Base")], tileSize: 256, maxzoom: 16,
-        attribution: "Basemap Esri, HERE, Garmin, © OpenStreetMap contributors · Timetable: BKK GTFS" },
+        attribution: "Basemap Esri, HERE, Garmin, © OpenStreetMap contributors · Timetables: public GTFS feeds" },
       ref: { type: "raster", tiles: [ESRI("Reference")], tileSize: 256, maxzoom: 16 },
+      net: { type: "geojson", data: { type: "FeatureCollection", features: [] } },
     },
     layers: [
       { id: "bg", type: "background", paint: { "background-color": "#0d0d0d" } },
       { id: "base", type: "raster", source: "base", paint: { "raster-brightness-max": 0.45 } },
+      { id: "net", type: "line", source: "net", layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": ["get", "col"],
+          "line-opacity": ["case", ["==", ["get", "e"], 1], 0.45, ["get", "a"]],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["case", ["==", ["get", "e"], 1], 2.2, 0.6],
+            14, ["case", ["==", ["get", "e"], 1], 5, 1.6]],
+        } },
       { id: "ref", type: "raster", source: "ref", paint: { "raster-opacity": 0.55 } },
     ],
   },
-  center: [19.06, 47.50], zoom: 11.3, minZoom: 9, maxZoom: 16,
+  center: WORLD.center, zoom: WORLD.zoom, minZoom: 0.3, maxZoom: 16, renderWorldCopies: false,
   dragRotate: false, pitchWithRotate: false, touchPitch: false, attributionControl: { compact: true },
 });
 map.touchZoomRotate.disableRotation();
 
-function addNetwork() {
-  const feats = shapes.map((sh, i) => {
+function setNetwork() {
+  const feats = D ? shapes.map((sh, i) => {
     const [c, e] = D.shape_style[i];
     const coords = [];
     for (let k = 0; k < sh.x.length; k++) coords.push(toLL(sh.x[k], sh.y[k]));
-    return { type: "Feature", properties: { col: D.colours[c], e },
+    return { type: "Feature", properties: { col: D.colours[c], e, a: D.network_alpha },
       geometry: { type: "LineString", coordinates: coords } };
-  });
-  feats.sort((a, b) => a.properties.e - b.properties.e);    // emphasised lines on top
-  map.addSource("net", { type: "geojson", data: { type: "FeatureCollection", features: feats } });
-  map.addLayer({ id: "net", type: "line", source: "net",
-    layout: { "line-join": "round", "line-cap": "round" },
-    paint: {
-      "line-color": ["get", "col"],
-      "line-opacity": ["case", ["==", ["get", "e"], 1], 0.45, D.network_alpha],
-      "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["case", ["==", ["get", "e"], 1], 2.2, 0.6],
-        14, ["case", ["==", ["get", "e"], 1], 5, 1.6]],
-    } }, "ref");
+  }).sort((a, b) => a.properties.e - b.properties.e) : [];   // emphasised lines on top
+  map.getSource("net").setData({ type: "FeatureCollection", features: feats });
+}
+
+// ------------------------------------------------------------------ city markers
+let CITIES = [];
+const markers = {};
+function addMarkers() {
+  for (const c of CITIES) {
+    const el = document.createElement("div");
+    el.className = "city";
+    el.innerHTML = `<span class="pin"></span><span class="lbl">${c.name}</span>`;
+    el.title = `${c.name}: ${c.trips.toLocaleString("en")} scheduled trips in a day`;
+    el.onclick = ev => { ev.stopPropagation(); openCity(c.key); };
+    markers[c.key] = new maplibregl.Marker({ element: el, anchor: "left" }).setLngLat(c.center).addTo(map);
+  }
 }
 
 // ------------------------------------------------------------------ vehicles
-const fx = document.getElementById("fx"), ctx = fx.getContext("2d");
+const fx = $("fx"), ctx = fx.getContext("2d");
 let dpr = 1, W = 0, H = 0, sprites = [], spriteR = 0;
 
 function resize() {
@@ -238,7 +285,7 @@ function resize() {
 }
 
 function dotRadius() {            // px; grows gently with zoom like a map symbol
-  return Math.max(1.6, 2.1 * Math.pow(1.45, map.getZoom() - 11.3));
+  return Math.max(1.4, 2.1 * Math.pow(1.45, map.getZoom() - 11.3));
 }
 
 // one pre-rendered sprite per (colour, emphasis): glow, disc, white core at 26% of the area
@@ -262,25 +309,24 @@ const tmp = [0, 0];
 let simT = 8 * 3600, speed = 120, playing = true, lastFrame = performance.now();
 
 function draw() {
-  const z = map.getZoom();
+  ctx.clearRect(0, 0, fx.width, fx.height);
+  if (!D) return;
   if (Math.abs(dotRadius() - spriteR) > 0.15) buildSprites();
-  const k = 512 * Math.pow(2, z) / (TAU * R) * dpr;          // device px per mercator metre
+  const k = 512 * Math.pow(2, map.getZoom()) / (TAU * R) * dpr;   // device px per mercator metre
   const cLL = map.getCenter();
   const cx = cLL.lng * TAU / 360 * R;
   const cy = R * Math.log(Math.tan(Math.PI / 4 + cLL.lat * Math.PI / 360));
   const hw = W * dpr / 2, hh = H * dpr / 2;
-  ctx.clearRect(0, 0, fx.width, fx.height);
 
   const step = speed / 30;                                    // trail spacing = one reel frame of timetable
-  const nTrips = trips.length / 4;
-  const lo = bisect(tripStarts, simT - maxDur);
-  const hi = bisect(tripStarts, simT);
+  const n = tripStarts.length;
+  const lo = bisect(tripStarts, simT - maxDur), hi = bisect(tripStarts, simT);
   // trails, batched per colour and per age
   const paths = D.colours.map(() => Array.from({ length: TRAIL }, () => new Path2D()));
   const heads = [];
   let live = 0;
-  for (let i = lo; i <= hi && i < nTrips; i++) {
-    const st = trips[4 * i];
+  for (let i = lo; i <= hi && i < n; i++) {
+    const st = tripStarts[i];
     if (st > simT || tripEnd[i] < simT) continue;
     const pat = pats[trips[4 * i + 1]], prof = profs[trips[4 * i + 2]];
     if (!pos(pat, prof, simT - st, tmp)) continue;
@@ -308,82 +354,147 @@ function draw() {
       const sp = sprites[heads[h + 2]][e];
       ctx.drawImage(sp.cv, heads[h] - sp.half, heads[h + 1] - sp.half);
     }
-  document.getElementById("count").textContent = `${live.toLocaleString("en")} vehicles running`;
+  $("count").textContent = `${live.toLocaleString("en")} vehicles running`;
 }
 
 // ------------------------------------------------------------------ clock + controls
-const slider = document.getElementById("slider"), clockEl = document.getElementById("clock");
+const slider = $("slider"), clockEl = $("clock");
 const fmt = t => { const s = ((Math.floor(t) % 86400) + 86400) % 86400;
   return String(Math.floor(s / 3600)).padStart(2, "0") + ":" + String(Math.floor(s / 60) % 60).padStart(2, "0"); };
-let tripStarts;
 
 function tick(now) {
   const dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now;
-  if (playing) {
-    simT += dt * speed;
-    if (simT > D.t1) simT = D.t0;
-    slider.value = Math.round(simT);
+  if (D) {
+    if (playing) {
+      simT += dt * speed;
+      if (simT > D.t1) simT = D.t0;
+      slider.value = Math.round(simT);
+    }
+    clockEl.textContent = fmt(simT);
   }
-  clockEl.textContent = fmt(simT);
   draw();
   requestAnimationFrame(tick);
 }
 
-function setPlaying(p) { playing = p; document.getElementById("play").textContent = p ? "❚❚" : "▶"; }
+function setPlaying(p) { playing = p; $("play").textContent = p ? "❚❚" : "▶"; }
+
+function setLegend() {
+  const rows = (D.legend || []).map(([name, cols]) => [name[0].toUpperCase() + name.slice(1),
+    Array.isArray(cols) ? cols : [cols]]);
+  $("legend").innerHTML = `<div class="title">Mode</div>` + rows.map(([n, cols]) =>
+    `<div class="row"><span class="dots">${cols.slice(0, 6).map(x => `<i style="background:${x};color:${x}"></i>`).join("")}</span>${n}</div>`).join("");
+}
 
 function initControls() {
-  slider.min = D.t0; slider.max = D.t1; slider.value = simT;
   slider.addEventListener("input", () => { simT = +slider.value; });
   slider.addEventListener("pointerdown", () => setPlaying(false));
-  document.getElementById("play").onclick = () => setPlaying(!playing);
-  const box = document.getElementById("speeds");
+  $("play").onclick = () => setPlaying(!playing);
+  const box = $("speeds");
   for (const [v, label] of SPEEDS) {
     const b = document.createElement("button"); b.textContent = label; b.className = v === speed ? "on" : "";
     b.onclick = () => { speed = v; [...box.children].forEach(x => x.classList.toggle("on", x === b)); };
     box.appendChild(b);
   }
-  addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "INPUT") { e.preventDefault(); setPlaying(!playing); } });
-
-  const leg = document.getElementById("legend");
-  const rows = [["Metro", null, ["#FFD800", "#E41F18", "#0A72C9", "#4CA22F"]]]
-    .concat(D.legend.filter(([n]) => n !== "rail").map(([n, c]) => [n[0].toUpperCase() + n.slice(1), c]));
-  leg.innerHTML = `<div class="title">Mode</div>` + rows.map(([n, c, many]) =>
-    `<div class="row">${(many || [c]).map(x => `<i style="background:${x};color:${x}"></i>`).join("")}${n}</div>`).join("");
+  addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "INPUT" && D) { e.preventDefault(); setPlaying(!playing); } });
+  $("back").onclick = closeCity;
 
   // signup
-  const box2 = document.getElementById("signup");
-  document.getElementById("close").onclick = () => box2.style.display = "none";
-  document.getElementById("form").addEventListener("submit", async ev => {
+  const sb = $("signup");
+  $("close").onclick = () => sb.style.display = "none";
+  $("form").addEventListener("submit", async ev => {
     ev.preventDefault();
     const email = ev.target.email.value.trim();
     if (!FORM_ENDPOINT) { window.open(NSOM_URL, "_blank", "noopener"); return; }
     try {
       const r = await fetch(FORM_ENDPOINT, { method: "POST", headers: { "Accept": "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ email, source: `transit-pulse-${CITY}` }) });
+        body: JSON.stringify({ email, source: `transit-pulse-${cityKey || "landing"}` }) });
       if (!r.ok) throw new Error(r.status);
-      box2.classList.add("done");
+      sb.classList.add("done");
     } catch (e) { window.open(NSOM_URL, "_blank", "noopener"); }
   });
 }
 
+// ------------------------------------------------------------------ search
+function initSearch() {
+  const q = $("q"), hits = $("hits");
+  let list = [], sel = 0;
+  const norm = t => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const render = () => {
+    const v = norm(q.value.trim());
+    list = v ? CITIES.filter(c => norm(c.name).includes(v)).sort((a, b) => norm(a.name).indexOf(v) - norm(b.name).indexOf(v))
+             : [...CITIES].sort((a, b) => a.name.localeCompare(b.name));
+    sel = 0;
+    hits.innerHTML = list.length ? list.map((c, i) =>
+      `<div data-k="${c.key}" class="${i === sel ? "sel" : ""}">${c.name}<span>${c.trips.toLocaleString("en")} trips</span></div>`).join("")
+      : `<div>No city yet. <span>Tell us which one!</span></div>`;
+    hits.classList.remove("hidden");
+  };
+  const pick = key => { hits.classList.add("hidden"); q.value = ""; q.blur(); if (key) openCity(key); };
+  q.addEventListener("focus", render);
+  q.addEventListener("input", render);
+  q.addEventListener("keydown", e => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault(); sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + list.length) % list.length;
+      [...hits.children].forEach((d, i) => d.classList.toggle("sel", i === sel));
+    } else if (e.key === "Enter") pick(list[sel] && list[sel].key);
+    else if (e.key === "Escape") pick(null);
+  });
+  hits.addEventListener("mousedown", e => { const d = e.target.closest("[data-k]"); if (d) pick(d.dataset.k); });
+  q.addEventListener("blur", () => setTimeout(() => hits.classList.add("hidden"), 150));
+}
+
+// ------------------------------------------------------------------ city <-> landing
+function setUrl(key) {
+  const u = new URL(location.href);
+  key ? u.searchParams.set("city", key) : u.searchParams.delete("city");
+  history.replaceState(null, "", u);
+}
+
+async function openCity(key) {
+  const meta = CITIES.find(c => c.key === key);
+  if (!meta) return;
+  const seq = ++loadSeq;
+  const [a, b] = [toLL(meta.bbox[0], meta.bbox[1]), toLL(meta.bbox[2], meta.bbox[3])];
+  map.fitBounds([a, b], { padding: 20, duration: 1600 });
+  $("loading").classList.toggle("hidden", !!cache[key]);
+  const d = cache[key] || (cache[key] = await fetch(`data/${key}.json`).then(r => r.json()));
+  if (seq !== loadSeq) return;                                // the user already picked another city
+  D = d; cityKey = key; decode(d);
+  setNetwork(); buildSprites(); setLegend();
+  for (const [k, m] of Object.entries(markers)) m.getElement().classList.toggle("hidden", k === key);
+  $("city").textContent = d.city;
+  const day = new Date(d.date.slice(0, 4) + "-" + d.date.slice(4, 6) + "-" + d.date.slice(6)).toLocaleDateString("en", { weekday: "long" });
+  $("subtitle").textContent = `Every scheduled vehicle · a ${day} timetable`;
+  slider.min = d.t0; slider.max = d.t1;
+  simT = Math.min(Math.max(simT, d.t0), d.t1);
+  for (const id of ["clock", "back", "legend", "player"]) $(id).classList.remove("hidden");
+  $("loading").classList.add("hidden");
+  setUrl(key);
+}
+
+function closeCity() {
+  loadSeq++;
+  D = null; cityKey = null;
+  setNetwork();
+  for (const m of Object.values(markers)) m.getElement().classList.remove("hidden");
+  $("city").textContent = "Transit Pulse";
+  $("subtitle").textContent = "Every scheduled vehicle, through a whole day. Pick a city on the map.";
+  $("count").textContent = "";
+  for (const id of ["clock", "back", "legend", "player"]) $(id).classList.add("hidden");
+  map.flyTo({ ...WORLD, duration: 1400 });
+  setUrl(null);
+}
+
 // ------------------------------------------------------------------ boot
 resize(); addEventListener("resize", resize);
-fetch(`data/${CITY}.json`).then(r => r.json()).then(d => {
-  D = d; decode(d);
-  tripStarts = new Int32Array(trips.length / 4);
-  for (let i = 0; i < tripStarts.length; i++) tripStarts[i] = trips[4 * i];
-  document.getElementById("city").textContent = d.city;
-  const day = new Date(d.date.slice(0, 4) + "-" + d.date.slice(4, 6) + "-" + d.date.slice(6)).toLocaleDateString("en", { weekday: "long" });
-  document.getElementById("subtitle").textContent = `Every scheduled vehicle · a ${day} timetable`;
-  const go = () => {
-    addNetwork();
-    const [x0, y0, x1, y1] = d.bbox, a = toLL(x0, y0), b = toLL(x1, y1);
-    map.fitBounds([a, b], { padding: 20, duration: 0 });
-    buildSprites(); initControls();
-    document.getElementById("loading").remove();
-    requestAnimationFrame(tick);
-  };
-  map.loaded() ? go() : map.on("load", go);
+map.on("load", async () => {
+  CITIES = await fetch("data/cities.json").then(r => r.json());
+  addMarkers(); initControls(); initSearch();
+  const far = () => document.body.classList.toggle("far", map.getZoom() < 3.2);
+  map.on("zoom", far); far();
+  $("count").textContent = `${CITIES.length} cities so far`;
+  if (Q.get("city")) openCity(Q.get("city"));
+  requestAnimationFrame(tick);
 });
 </script>
 </body>

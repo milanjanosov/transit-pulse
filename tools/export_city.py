@@ -50,9 +50,18 @@ def colour_tracks(cfg, g, tracks):
                 tr["color"] = c
 
 
+FULLDAY = os.path.join(os.path.dirname(OUT), "_nosync_data", "data")
+
+
 def main(key):
     cfg = tp.CITIES[key]
-    g = tp.load_gtfs(tp.ensure_feed(cfg))
+    # a full-day re-trim (tools/trim_fullday.py) wins over the reel's
+    # morning-only trim when it exists
+    full = os.path.join(FULLDAY, f"{key}_gtfs")
+    src = full if os.path.exists(os.path.join(full, "stop_times.txt")) \
+        else tp.ensure_feed(cfg)
+    print(f"[{key}] {src}")
+    g = tp.load_gtfs(src)
     date = tp.pick_service_date(g)
     sids = tp.services_on(g, date)
     tf = tp.mercator_transformer()
@@ -119,9 +128,21 @@ def main(key):
             names.append(n)
         flat_trips += [start, p, q, name_idx[n]]
 
-    legend = []
-    for rt, col in (cfg.get("mode_colors") or {}).items():
-        legend.append([tp.TYPE_NAMES.get(rt, str(rt)), col])
+    # legend: each colour named by the mode most of its runs belong to,
+    # grouped so Budapest's four metro hexes read as one "metro" row
+    from collections import Counter
+    by_col = {}
+    for tr in tracks:
+        by_col.setdefault(tr["color"], Counter())[
+            tp.TYPE_NAMES.get(tr["route_type"], "other")] += 1
+    groups = {}
+    for col, cnt in by_col.items():
+        name, n = cnt.most_common(1)[0]
+        g = groups.setdefault(name, [0, []])
+        g[0] += n
+        g[1].append(col)
+    legend = [[name, cols] for name, (n, cols) in
+              sorted(groups.items(), key=lambda kv: -kv[1][0])]
     out = {
         "city": cfg["name"], "date": date, "t0": T0, "t1": T1,
         "origin": [ox, oy], "bbox": [x0, y0, x1, y1],
