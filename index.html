@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Transit Pulse — Budapest</title>
+<meta name="description" content="Every scheduled bus, tram, metro and train in Budapest, moving through a whole day. Scrub the clock and watch the city breathe.">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d0d0d;
+    --ink: #f2f2f2;
+    --ink-dim: #9a9a9a;
+    --panel: rgba(13, 13, 13, 0.78);
+    --line: rgba(255, 255, 255, 0.12);
+    --accent: #FFD800;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: "Helvetica Neue", Helvetica, Inter, Arial, sans-serif; overflow: hidden; }
+  #map { position: absolute; inset: 0; }
+  #fx { position: absolute; inset: 0; pointer-events: none; }
+  .maplibregl-ctrl-attrib { background: rgba(0,0,0,0.5) !important; }
+  .maplibregl-ctrl-attrib, .maplibregl-ctrl-attrib a { color: #777 !important; font-size: 10px; }
+
+  /* title + clock, the reel's typography */
+  #head { position: absolute; top: max(16px, env(safe-area-inset-top)); left: 16px; right: 16px;
+    pointer-events: none; text-shadow: 0 1px 12px rgba(0,0,0,0.9); }
+  #head h1 { margin: 0; font-size: clamp(28px, 4.2vw, 48px); font-weight: 700; letter-spacing: -0.01em; }
+  #head .sub { margin-top: 4px; font-size: clamp(14px, 1.6vw, 18px); color: var(--ink-dim); }
+  #clock { margin-top: 10px; font-size: clamp(30px, 4vw, 44px); font-weight: 500;
+    font-variant-numeric: tabular-nums; }
+  #count { font-size: 14px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+
+  /* controls */
+  #ctl { position: absolute; left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+  .bar { pointer-events: auto; background: var(--panel); backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px); border: 1px solid var(--line); border-radius: 14px;
+    padding: 10px 12px; display: flex; align-items: center; gap: 12px; max-width: 760px; width: 100%; }
+  button { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--line);
+    border-radius: 9px; padding: 7px 11px; cursor: pointer; }
+  button:hover { border-color: rgba(255,255,255,0.35); }
+  button.on { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.4); }
+  #play { width: 44px; height: 38px; padding: 0; font-size: 16px; flex: none; }
+  #slider { flex: 1; min-width: 0; accent-color: var(--accent); height: 28px; }
+  .speeds { display: flex; gap: 4px; flex: none; }
+  .speeds button { padding: 6px 8px; font-size: 12px; }
+
+  /* signup */
+  #signup { flex-wrap: wrap; }
+  #signup .pitch { flex: 1 1 240px; font-size: 14px; line-height: 1.35; }
+  #signup .pitch b { display: block; font-size: 15px; }
+  #signup form { display: flex; gap: 8px; flex: 1 1 280px; }
+  #signup input { flex: 1; min-width: 0; font: inherit; font-size: 15px; color: var(--ink);
+    background: rgba(255,255,255,0.06); border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; }
+  #signup input:focus { outline: none; border-color: var(--accent); }
+  #signup .go { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 700; }
+  #signup .x { border: none; color: var(--ink-dim); padding: 4px 6px; margin-left: auto; }
+  #signup.done form { display: none; }
+  #thanks { display: none; font-size: 14px; color: var(--accent); }
+  #signup.done #thanks { display: block; }
+
+  /* legend */
+  #legend { position: absolute; right: 16px; top: max(16px, env(safe-area-inset-top));
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+    font-size: 13px; line-height: 1.7; }
+  #legend .row { display: flex; align-items: center; gap: 8px; }
+  #legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+    box-shadow: 0 0 6px currentColor; }
+  #legend .title { color: var(--ink-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; font-size: 15px;
+    color: var(--ink-dim); background: var(--bg); z-index: 5; }
+
+  @media (max-width: 640px) {
+    #legend { top: auto; bottom: 168px; font-size: 12px; padding: 8px 10px; }
+    .speeds button { padding: 5px 6px; }
+    #signup .pitch { font-size: 13px; }
+  }
+  body.embed #signup { display: none; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<canvas id="fx"></canvas>
+
+<div id="head">
+  <h1 id="city">Budapest</h1>
+  <div class="sub" id="subtitle">Every scheduled vehicle · one weekday</div>
+  <div id="clock">08:00</div>
+  <div id="count"></div>
+</div>
+
+<div id="legend"></div>
+
+<div id="ctl">
+  <div class="bar">
+    <button id="play" aria-label="Play or pause">❚❚</button>
+    <input id="slider" type="range" min="0" max="1" step="1" aria-label="Time of day">
+    <div class="speeds" id="speeds"></div>
+  </div>
+  <div class="bar" id="signup">
+    <div class="pitch"><b>More cities are coming.</b>Get the next map and the code behind it from The New Science of Maps.</div>
+    <form id="form">
+      <input type="email" name="email" required placeholder="your@email.com" autocomplete="email" aria-label="Email">
+      <button class="go" type="submit">Notify me</button>
+    </form>
+    <div id="thanks">Thanks! You're on the list.</div>
+    <button class="x" id="close" aria-label="Hide">✕</button>
+  </div>
+</div>
+
+<div id="loading">Loading the timetable…</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+// ------------------------------------------------------------------ config
+// Where sign-ups go. FORM_ENDPOINT empty => the button opens NSOM instead
+// (no address is collected silently anywhere). When the page is embedded in
+// the NSOM Squarespace page, add ?embed=1 and the native newsletter block
+// below the iframe does the capture.
+const FORM_ENDPOINT = "";
+const NSOM_URL = "https://www.thenewscienceofmaps.com/";
+const CITY = new URLSearchParams(location.search).get("city") || "budapest";
+if (new URLSearchParams(location.search).get("embed")) document.body.classList.add("embed");
+
+const ESRI = l => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_${l}/MapServer/tile/{z}/{y}/{x}`;
+const SPEEDS = [[60, "½×"], [120, "1×"], [300, "2.5×"], [900, "7.5×"]];   // timetable seconds per real second; 1× = the reel's pace
+const R = 6378137, TAU = 2 * Math.PI;
+
+// ------------------------------------------------------------------ data
+let D, shapes = [], pats = [], profs = [], trips, tripEnd, maxDur = 0;
+
+function decode(d) {
+  const [ox, oy] = d.origin;
+  for (const flat of d.shapes) {
+    const n = flat.length / 2, x = new Float64Array(n), y = new Float64Array(n), cum = new Float64Array(n);
+    let ax = ox, ay = oy;
+    for (let i = 0; i < n; i++) {
+      ax += flat[2 * i]; ay += flat[2 * i + 1]; x[i] = ax; y[i] = ay;
+      if (i) cum[i] = cum[i - 1] + Math.hypot(x[i] - x[i - 1], y[i] - y[i - 1]);
+    }
+    shapes.push({ x, y, cum });
+  }
+  // cum is rebuilt from metre-rounded vertices, so it drifts from the engine's
+  // by well under a metre per vertex - invisible at map scale
+  pats = d.patterns.map(([s, c, e, ds]) => ({ s, c, e, ds: Int32Array.from(ds) }));
+  profs = d.profiles.map(p => Int32Array.from(p));
+  const t = d.trips, n = t.length / 4;
+  trips = new Int32Array(t);
+  tripEnd = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = profs[t[4 * i + 2]];
+    tripEnd[i] = t[4 * i] + p[p.length - 1];
+    maxDur = Math.max(maxDur, p[p.length - 1]);
+  }
+}
+
+function bisect(a, v) {          // last index i with a[i] <= v
+  let lo = 0, hi = a.length - 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (a[m] <= v) lo = m; else hi = m - 1; }
+  return lo;
+}
+
+// time -> distance along shape -> (x, y): the same two np.interp as the reel
+function pos(pat, prof, rel, out) {
+  if (rel < 0 || rel > prof[prof.length - 1]) return false;
+  const i = bisect(prof, rel);
+  let d;
+  if (i >= prof.length - 1) d = pat.ds[pat.ds.length - 1];
+  else {
+    const span = prof[i + 1] - prof[i];
+    d = span > 0 ? pat.ds[i] + (pat.ds[i + 1] - pat.ds[i]) * (rel - prof[i]) / span : pat.ds[i];
+  }
+  const sh = shapes[pat.s], c = sh.cum;
+  if (d <= 0) { out[0] = sh.x[0]; out[1] = sh.y[0]; return true; }
+  if (d >= c[c.length - 1]) { out[0] = sh.x[c.length - 1]; out[1] = sh.y[c.length - 1]; return true; }
+  const j = bisect(c, d), f = (d - c[j]) / ((c[j + 1] - c[j]) || 1);
+  out[0] = sh.x[j] + (sh.x[j + 1] - sh.x[j]) * f;
+  out[1] = sh.y[j] + (sh.y[j + 1] - sh.y[j]) * f;
+  return true;
+}
+
+const toLL = (x, y) => [x / R * 360 / TAU, (2 * Math.atan(Math.exp(y / R)) - Math.PI / 2) * 180 / Math.PI];
+
+// ------------------------------------------------------------------ map
+const map = new maplibregl.Map({
+  container: "map",
+  style: {
+    version: 8,
+    sources: {
+      base: { type: "raster", tiles: [ESRI("Base")], tileSize: 256, maxzoom: 16,
+        attribution: "Basemap Esri, HERE, Garmin, © OpenStreetMap contributors · Timetable: BKK GTFS" },
+      ref: { type: "raster", tiles: [ESRI("Reference")], tileSize: 256, maxzoom: 16 },
+    },
+    layers: [
+      { id: "bg", type: "background", paint: { "background-color": "#0d0d0d" } },
+      { id: "base", type: "raster", source: "base", paint: { "raster-brightness-max": 0.45 } },
+      { id: "ref", type: "raster", source: "ref", paint: { "raster-opacity": 0.55 } },
+    ],
+  },
+  center: [19.06, 47.50], zoom: 11.3, minZoom: 9, maxZoom: 16,
+  dragRotate: false, pitchWithRotate: false, touchPitch: false, attributionControl: { compact: true },
+});
+map.touchZoomRotate.disableRotation();
+
+function addNetwork() {
+  const feats = shapes.map((sh, i) => {
+    const [c, e] = D.shape_style[i];
+    const coords = [];
+    for (let k = 0; k < sh.x.length; k++) coords.push(toLL(sh.x[k], sh.y[k]));
+    return { type: "Feature", properties: { col: D.colours[c], e },
+      geometry: { type: "LineString", coordinates: coords } };
+  });
+  feats.sort((a, b) => a.properties.e - b.properties.e);    // emphasised lines on top
+  map.addSource("net", { type: "geojson", data: { type: "FeatureCollection", features: feats } });
+  map.addLayer({ id: "net", type: "line", source: "net",
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: {
+      "line-color": ["get", "col"],
+      "line-opacity": ["case", ["==", ["get", "e"], 1], 0.45, D.network_alpha],
+      "line-width": ["interpolate", ["linear"], ["zoom"], 10, ["case", ["==", ["get", "e"], 1], 2.2, 0.6],
+        14, ["case", ["==", ["get", "e"], 1], 5, 1.6]],
+    } }, "ref");
+}
+
+// ------------------------------------------------------------------ vehicles
+const fx = document.getElementById("fx"), ctx = fx.getContext("2d");
+let dpr = 1, W = 0, H = 0, sprites = [], spriteR = 0;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  fx.width = W * dpr; fx.height = H * dpr;
+  fx.style.width = W + "px"; fx.style.height = H + "px";
+}
+
+function dotRadius() {            // px; grows gently with zoom like a map symbol
+  return Math.max(1.6, 2.1 * Math.pow(1.45, map.getZoom() - 11.3));
+}
+
+// one pre-rendered sprite per (colour, emphasis): glow, disc, white core at 26% of the area
+function buildSprites() {
+  spriteR = dotRadius();
+  sprites = D.colours.map(col => [1, 1.6].map(scale => {
+    const r = spriteR * scale * dpr, g = r * 3.2, s = Math.ceil(2 * g), cv = document.createElement("canvas");
+    cv.width = cv.height = s;
+    const c = cv.getContext("2d"), m = s / 2;
+    const glow = c.createRadialGradient(m, m, r * 0.6, m, m, g);
+    glow.addColorStop(0, col + "66"); glow.addColorStop(1, col + "00");
+    c.fillStyle = glow; c.beginPath(); c.arc(m, m, g, 0, TAU); c.fill();
+    c.fillStyle = col; c.beginPath(); c.arc(m, m, r, 0, TAU); c.fill();
+    c.fillStyle = "#ffffff"; c.beginPath(); c.arc(m, m, r * Math.sqrt(0.26), 0, TAU); c.fill();
+    return { cv, half: m };
+  }));
+}
+
+const TRAIL = 8;
+const tmp = [0, 0];
+let simT = 8 * 3600, speed = 120, playing = true, lastFrame = performance.now();
+
+function draw() {
+  const z = map.getZoom();
+  if (Math.abs(dotRadius() - spriteR) > 0.15) buildSprites();
+  const k = 512 * Math.pow(2, z) / (TAU * R) * dpr;          // device px per mercator metre
+  const cLL = map.getCenter();
+  const cx = cLL.lng * TAU / 360 * R;
+  const cy = R * Math.log(Math.tan(Math.PI / 4 + cLL.lat * Math.PI / 360));
+  const hw = W * dpr / 2, hh = H * dpr / 2;
+  ctx.clearRect(0, 0, fx.width, fx.height);
+
+  const step = speed / 30;                                    // trail spacing = one reel frame of timetable
+  const nTrips = trips.length / 4;
+  const lo = bisect(tripStarts, simT - maxDur);
+  const hi = bisect(tripStarts, simT);
+  // trails, batched per colour and per age
+  const paths = D.colours.map(() => Array.from({ length: TRAIL }, () => new Path2D()));
+  const heads = [];
+  let live = 0;
+  for (let i = lo; i <= hi && i < nTrips; i++) {
+    const st = trips[4 * i];
+    if (st > simT || tripEnd[i] < simT) continue;
+    const pat = pats[trips[4 * i + 1]], prof = profs[trips[4 * i + 2]];
+    if (!pos(pat, prof, simT - st, tmp)) continue;
+    live++;
+    let px = hw + (tmp[0] - cx) * k, py = hh - (tmp[1] - cy) * k;
+    if (px < -40 || py < -40 || px > fx.width + 40 || py > fx.height + 40) continue;
+    heads.push(px, py, pat.c, pat.e);
+    for (let a = 1; a <= TRAIL; a++) {
+      if (!pos(pat, prof, simT - st - a * step, tmp)) break;
+      const qx = hw + (tmp[0] - cx) * k, qy = hh - (tmp[1] - cy) * k;
+      const p = paths[pat.c][a - 1]; p.moveTo(px, py); p.lineTo(qx, qy);
+      px = qx; py = qy;
+    }
+  }
+  ctx.lineCap = "round";
+  ctx.lineWidth = spriteR * 1.1 * dpr;
+  for (let c = 0; c < paths.length; c++) {
+    ctx.strokeStyle = D.colours[c];
+    for (let a = 0; a < TRAIL; a++) { ctx.globalAlpha = 0.55 * (1 - a / TRAIL); ctx.stroke(paths[c][a]); }
+  }
+  ctx.globalAlpha = 1;
+  for (let e = 0; e <= 1; e++)                                // emphasised dots drawn last, on top
+    for (let h = 0; h < heads.length; h += 4) {
+      if (heads[h + 3] !== e) continue;
+      const sp = sprites[heads[h + 2]][e];
+      ctx.drawImage(sp.cv, heads[h] - sp.half, heads[h + 1] - sp.half);
+    }
+  document.getElementById("count").textContent = `${live.toLocaleString("en")} vehicles running`;
+}
+
+// ------------------------------------------------------------------ clock + controls
+const slider = document.getElementById("slider"), clockEl = document.getElementById("clock");
+const fmt = t => { const s = ((Math.floor(t) % 86400) + 86400) % 86400;
+  return String(Math.floor(s / 3600)).padStart(2, "0") + ":" + String(Math.floor(s / 60) % 60).padStart(2, "0"); };
+let tripStarts;
+
+function tick(now) {
+  const dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now;
+  if (playing) {
+    simT += dt * speed;
+    if (simT > D.t1) simT = D.t0;
+    slider.value = Math.round(simT);
+  }
+  clockEl.textContent = fmt(simT);
+  draw();
+  requestAnimationFrame(tick);
+}
+
+function setPlaying(p) { playing = p; document.getElementById("play").textContent = p ? "❚❚" : "▶"; }
+
+function initControls() {
+  slider.min = D.t0; slider.max = D.t1; slider.value = simT;
+  slider.addEventListener("input", () => { simT = +slider.value; });
+  slider.addEventListener("pointerdown", () => setPlaying(false));
+  document.getElementById("play").onclick = () => setPlaying(!playing);
+  const box = document.getElementById("speeds");
+  for (const [v, label] of SPEEDS) {
+    const b = document.createElement("button"); b.textContent = label; b.className = v === speed ? "on" : "";
+    b.onclick = () => { speed = v; [...box.children].forEach(x => x.classList.toggle("on", x === b)); };
+    box.appendChild(b);
+  }
+  addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "INPUT") { e.preventDefault(); setPlaying(!playing); } });
+
+  const leg = document.getElementById("legend");
+  const rows = [["Metro", null, ["#FFD800", "#E41F18", "#0A72C9", "#4CA22F"]]]
+    .concat(D.legend.filter(([n]) => n !== "rail").map(([n, c]) => [n[0].toUpperCase() + n.slice(1), c]));
+  leg.innerHTML = `<div class="title">Mode</div>` + rows.map(([n, c, many]) =>
+    `<div class="row">${(many || [c]).map(x => `<i style="background:${x};color:${x}"></i>`).join("")}${n}</div>`).join("");
+
+  // signup
+  const box2 = document.getElementById("signup");
+  document.getElementById("close").onclick = () => box2.style.display = "none";
+  document.getElementById("form").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const email = ev.target.email.value.trim();
+    if (!FORM_ENDPOINT) { window.open(NSOM_URL, "_blank", "noopener"); return; }
+    try {
+      const r = await fetch(FORM_ENDPOINT, { method: "POST", headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ email, source: `transit-pulse-${CITY}` }) });
+      if (!r.ok) throw new Error(r.status);
+      box2.classList.add("done");
+    } catch (e) { window.open(NSOM_URL, "_blank", "noopener"); }
+  });
+}
+
+// ------------------------------------------------------------------ boot
+resize(); addEventListener("resize", resize);
+fetch(`data/${CITY}.json`).then(r => r.json()).then(d => {
+  D = d; decode(d);
+  tripStarts = new Int32Array(trips.length / 4);
+  for (let i = 0; i < tripStarts.length; i++) tripStarts[i] = trips[4 * i];
+  document.getElementById("city").textContent = d.city;
+  const day = new Date(d.date.slice(0, 4) + "-" + d.date.slice(4, 6) + "-" + d.date.slice(6)).toLocaleDateString("en", { weekday: "long" });
+  document.getElementById("subtitle").textContent = `Every scheduled vehicle · a ${day} timetable`;
+  const go = () => {
+    addNetwork();
+    const [x0, y0, x1, y1] = d.bbox, a = toLL(x0, y0), b = toLL(x1, y1);
+    map.fitBounds([a, b], { padding: 20, duration: 0 });
+    buildSprites(); initControls();
+    document.getElementById("loading").remove();
+    requestAnimationFrame(tick);
+  };
+  map.loaded() ? go() : map.on("load", go);
+});
+</script>
+</body>
+</html>
