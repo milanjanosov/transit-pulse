@@ -66,7 +66,8 @@
   #signup { flex-wrap: wrap; }
   #signup .pitch { flex: 1 1 240px; font-size: 14px; line-height: 1.35; }
   #signup .pitch b { display: block; font-size: 15px; }
-  #signup .go { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 700; }
+  #signup .go { background: var(--accent); color: #111; border: 1px solid var(--accent); border-radius: 9px;
+    padding: 8px 14px; font-weight: 700; text-decoration: none; white-space: nowrap; }
   #signup .x { border: none; color: var(--ink-dim); padding: 4px 6px; margin-left: auto; }
 
   /* legend */
@@ -98,11 +99,6 @@
     .city .lbl { font-size: 12px; }
   }
   body.embed #signup { display: none; }
-  #modal { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center;
-    background: rgba(0,0,0,0.6); padding: 16px; }
-  #modal .card { position: relative; width: min(480px, 100%); background: #111; border-radius: 14px; overflow: hidden; }
-  #modal iframe { display: block; width: 100%; height: 320px; border: 0; background: #111; }
-  #modal .x { position: absolute; top: 6px; right: 8px; color: #999; border: none; font-size: 16px; z-index: 1; }
 </style>
 </head>
 <body>
@@ -128,26 +124,20 @@
   </div>
   <div class="bar" id="signup">
     <div class="pitch"><b>More cities are coming.</b>Get each new map, and the Python behind it, in my free newsletter.</div>
-    <button class="go" id="sub">Subscribe free</button>
+    <a class="go" id="sub" href="https://milanjanosov.substack.com/subscribe?utm_source=transit-pulse" target="_blank" rel="noopener">Subscribe free</a>
     <button class="x" id="close" aria-label="Hide">✕</button>
   </div>
 </div>
 
 <div id="loading" class="hidden">Loading the timetable…</div>
 
-<div id="modal" class="hidden" role="dialog" aria-label="Subscribe">
-  <div class="card">
-    <button class="x" id="mclose" aria-label="Close">✕</button>
-    <iframe id="subframe" title="Subscribe to Milan Janosov's newsletter" frameborder="0" scrolling="no"></iframe>
-  </div>
-</div>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 // ------------------------------------------------------------------ config
-// Sign-ups go to the Substack list via Substack's embed form. When the page
-// is embedded elsewhere with its own signup, ?embed=1 hides this bar.
-const SUBSTACK_EMBED = "https://milanjanosov.substack.com/embed";
+// Sign-ups go to the Substack subscribe page (utm_source shows up in the
+// Substack dashboard). When the page is embedded elsewhere with its own
+// signup, ?embed=1 hides this bar.
 // Visitor counts: GoatCounter (free, no cookies, so no consent banner).
 // Empty => nothing is loaded or sent.
 const GOATCOUNTER = "";
@@ -408,17 +398,9 @@ function initControls() {
   addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "INPUT" && D) { e.preventDefault(); setPlaying(!playing); } });
   $("back").onclick = closeCity;
 
-  // signup: Substack's own embed form, so addresses go straight onto the
-  // newsletter list and Substack sends the confirmation. Loaded on first open only.
-  const sb = $("signup"), modal = $("modal");
-  $("close").onclick = () => sb.style.display = "none";
-  $("sub").onclick = () => {
-    if (!$("subframe").src) $("subframe").src = SUBSTACK_EMBED;
-    modal.classList.remove("hidden");
-    track("subscribe-open");
-  };
-  $("mclose").onclick = () => modal.classList.add("hidden");
-  modal.addEventListener("click", e => { if (e.target === modal) modal.classList.add("hidden"); });
+  // signup
+  $("close").onclick = () => $("signup").style.display = "none";
+  $("sub").onclick = () => track("subscribe-click");
 }
 
 // ------------------------------------------------------------------ search
